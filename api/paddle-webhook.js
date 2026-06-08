@@ -44,7 +44,7 @@ function verifyPaddleSignature(rawBody, signature, secret) {
 
     // Replay attack prevention — reject events older than 5 minutes
     const eventAge = Math.floor(Date.now() / 1000) - parseInt(ts, 10);
-    if (isNaN(eventAge) || eventAge > 300) {
+    if (isNaN(eventAge) || Math.abs(eventAge) > 300) {
       console.warn("[paddle-webhook] Rejected: timestamp too old", { eventAge });
       return false;
     }
@@ -66,6 +66,44 @@ function verifyPaddleSignature(rawBody, signature, secret) {
     console.error("[paddle-webhook] Signature verification error:", err.message);
     return false;
   }
+}
+
+/**
+ * Best-effort raw body extraction for signature verification.
+ * Paddle signatures are computed over the exact raw payload bytes.
+ */
+async function getRawBody(req) {
+  if (typeof req.body === "string") {
+    return req.body;
+  }
+
+  if (Buffer.isBuffer(req.body)) {
+    return req.body.toString("utf8");
+  }
+
+  if (Buffer.isBuffer(req.rawBody)) {
+    return req.rawBody.toString("utf8");
+  }
+
+  if (typeof req.rawBody === "string") {
+    return req.rawBody;
+  }
+
+  // Fallback only; this may not always match original byte-for-byte payload.
+  if (req.body && typeof req.body === "object") {
+    return JSON.stringify(req.body);
+  }
+
+  if (!req.readable) {
+    return "";
+  }
+
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /* ─────────────────────────────────────────────
@@ -110,18 +148,33 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    const requestId = req.headers["x-vercel-id"] || "unknown";
+
     // 1. Get the raw body for signature verification
-    //    Vercel provides req.body as parsed JSON by default.
-    //    We need the raw body string for HMAC computation.
-    const rawBody =
-      typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+    const rawBody = await getRawBody(req);
 
     // 2. Verify Paddle signature
     const signature = req.headers["paddle-signature"];
     const secret = process.env.PADDLE_WEBHOOK_SECRET;
 
+    if (!secret) {
+      console.error("[paddle-webhook] Missing PADDLE_WEBHOOK_SECRET", { requestId });
+      return res.status(500).json({ error: "Webhook secret not configured" });
+    }
+
+    if (!rawBody) {
+      console.warn("[paddle-webhook] Empty body received", { requestId });
+      return res.status(400).json({ error: "Empty request body" });
+    }
+
+    console.log("[paddle-webhook] Incoming request", {
+      requestId,
+      hasSignature: Boolean(signature),
+      bodyLength: rawBody.length,
+    });
+
     if (!verifyPaddleSignature(rawBody, signature, secret)) {
-      console.warn("[paddle-webhook] Invalid signature — rejecting");
+      console.warn("[paddle-webhook] Invalid signature — rejecting", { requestId });
       return res.status(403).json({ error: "Invalid signature" });
     }
 
@@ -138,10 +191,22 @@ module.exports = async function handler(req, res) {
     const userId = customData.userId || customData.user_id || null;
 
     if (!userId) {
-      console.warn("[paddle-webhook] No userId in custom_data:", customData);
+      console.warn("[paddle-webhook] No userId in custom_data", {
+        requestId,
+        eventType,
+        eventId,
+        customData,
+      });
       // Still return 200 to Paddle to avoid retries
       return res.status(200).json({ received: true, warning: "no userId" });
     }
+
+    console.log("[paddle-webhook] Firestore write start", {
+      requestId,
+      eventType,
+      eventId,
+      userId,
+    });
 
     // 5. Route by event type
     switch (eventType) {
@@ -180,6 +245,13 @@ module.exports = async function handler(req, res) {
       default:
         console.log(`[paddle-webhook] Unhandled event type: ${eventType}`);
     }
+
+    console.log("[paddle-webhook] Firestore write done", {
+      requestId,
+      eventType,
+      eventId,
+      userId,
+    });
 
     // 6. Always return 200 to Paddle
     return res.status(200).json({ received: true, eventType });

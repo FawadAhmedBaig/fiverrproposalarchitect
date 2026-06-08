@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkout — Proposal Architect Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --bg-card: #161b27;
+      --border: rgba(255,255,255,0.08);
+      --text: #e8ecf4;
+      --text-muted: #8892a6;
+      --accent: #1dbf73;
+      --danger: #ef4444;
+      --pro-gradient: linear-gradient(135deg, #6c5ce7, #a855f7, #ec4899);
+      --font: 'Inter', -apple-system, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-font-smoothing: antialiased;
+    }
+    .checkout-container {
+      text-align: center;
+      max-width: 480px;
+      padding: 40px 24px;
+    }
+    .logo {
+      width: 56px; height: 56px;
+      background: var(--pro-gradient);
+      border-radius: 16px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 28px; font-weight: 800; color: #fff;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 24px rgba(108,92,231,0.4);
+    }
+    h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.5px; }
+    h1 span {
+      background: var(--pro-gradient);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      font-size: 14px; color: var(--text-muted);
+      margin-bottom: 32px; line-height: 1.6;
+    }
+    .user-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 8px 16px;
+      margin-bottom: 24px;
+      font-size: 12px; color: var(--text-muted);
+    }
+    .user-badge .dot {
+      width: 6px; height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+    }
+    .loading-spinner {
+      width: 40px; height: 40px;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: #a855f7;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status-text {
+      font-size: 13px; color: var(--text-muted);
+    }
+    .error-card {
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.2);
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 16px;
+    }
+    .error-card h3 { color: var(--danger); font-size: 14px; margin-bottom: 6px; }
+    .error-card p { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+    .success-card {
+      background: rgba(29,191,115,0.08);
+      border: 1px solid rgba(29,191,115,0.2);
+      border-radius: 12px;
+      padding: 24px;
+      margin-top: 16px;
+    }
+    .success-card h3 { color: var(--accent); font-size: 16px; margin-bottom: 8px; }
+    .success-card p { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+    .hidden { display: none !important; }
+    .footer-links {
+      margin-top: 40px;
+      display: flex; justify-content: center; gap: 20px;
+    }
+    .footer-links a {
+      color: var(--text-muted); text-decoration: none; font-size: 11px;
+    }
+    .footer-links a:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+  <div class="checkout-container">
+    <div class="logo">P</div>
+    <h1>Upgrade to <span>Pro</span></h1>
+    <p class="subtitle">Unlimited AI-powered proposals, premium templates, and full history access.</p>
+
+    <!-- User badge (shows the authenticated email) -->
+    <div class="user-badge hidden" id="user-badge">
+      <span class="dot"></span>
+      <span id="user-email">user@example.com</span>
+    </div>
+
+    <!-- Loading state -->
+    <div id="loading-state">
+      <div class="loading-spinner"></div>
+      <p class="status-text" id="status-text">Initializing checkout...</p>
+    </div>
+
+    <!-- Error state (no userId) -->
+    <div id="error-state" class="hidden">
+      <div class="error-card">
+        <h3>⚠️ Authentication Required</h3>
+        <p>No user identity was provided. Please open the checkout from inside the Proposal Architect Pro extension after signing in with your Google account.</p>
+      </div>
+    </div>
+
+    <!-- Success state (after checkout completes) -->
+    <div id="success-state" class="hidden">
+      <div class="success-card">
+        <h3>🎉 Welcome to Pro!</h3>
+        <p>Your subscription is now active. Return to the extension — your Pro features will activate automatically within a few minutes.</p>
+        <p style="margin-top: 12px; font-size: 11px;">You can close this tab now.</p>
+      </div>
+    </div>
+
+    <div class="footer-links">
+      <a href="/privacy.html">Privacy</a>
+      <a href="/terms.html">Terms</a>
+      <a href="/refund.html">Refund Policy</a>
+    </div>
+  </div>
+
+  <!-- Paddle.js v2 -->
+  <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      // ── Configuration ──
+      // IMPORTANT: Replace these with your actual Paddle values
+      var PADDLE_CLIENT_TOKEN = "YOUR_PADDLE_CLIENT_TOKEN";
+      var PADDLE_PRICE_ID = "YOUR_PADDLE_PRICE_ID";
+      var PADDLE_ENVIRONMENT = "sandbox"; // Change to "production" for live
+
+      // ── DOM refs ──
+      var loadingState = document.getElementById("loading-state");
+      var errorState = document.getElementById("error-state");
+      var successState = document.getElementById("success-state");
+      var statusText = document.getElementById("status-text");
+      var userBadge = document.getElementById("user-badge");
+      var userEmail = document.getElementById("user-email");
+
+      // ── Parse userId from URL query parameters ──
+      var params = new URLSearchParams(window.location.search);
+      var userId = params.get("userId");
+
+      if (!userId || userId.length < 3) {
+        // No userId — show error
+        loadingState.classList.add("hidden");
+        errorState.classList.remove("hidden");
+        return;
+      }
+
+      // Show user badge
+      userEmail.textContent = userId;
+      userBadge.classList.remove("hidden");
+
+      // ── Initialize Paddle ──
+      statusText.textContent = "Loading payment system...";
+
+      try {
+        // Set environment (sandbox for testing, remove for production)
+        if (PADDLE_ENVIRONMENT === "sandbox") {
+          Paddle.Environment.set("sandbox");
+        }
+
+        // Initialize with client-side token and event callback
+        Paddle.Initialize({
+          token: PADDLE_CLIENT_TOKEN,
+          eventCallback: function (event) {
+            if (event.name === "checkout.completed") {
+              // Checkout completed successfully
+              loadingState.classList.add("hidden");
+              successState.classList.remove("hidden");
+            }
+            if (event.name === "checkout.closed") {
+              // User closed the checkout overlay
+              statusText.textContent = "Checkout closed. Refresh to try again.";
+            }
+          },
+        });
+
+        // ── Open the checkout overlay ──
+        statusText.textContent = "Opening checkout...";
+
+        // Small delay to ensure Paddle.js is fully ready
+        setTimeout(function () {
+          Paddle.Checkout.open({
+            items: [
+              {
+                priceId: PADDLE_PRICE_ID,
+                quantity: 1,
+              },
+            ],
+            customData: {
+              userId: userId,
+            },
+            settings: {
+              displayMode: "overlay",
+              theme: "dark",
+              locale: "en",
+              successUrl: window.location.origin + "/success.html?userId=" + encodeURIComponent(userId),
+            },
+          });
+
+          statusText.textContent = "Complete your purchase in the overlay above ↑";
+        }, 500);
+
+      } catch (err) {
+        console.error("Paddle initialization error:", err);
+        statusText.textContent = "Error: " + err.message;
+      }
+    })();
+  </script>
+</body>
+</html>

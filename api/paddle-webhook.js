@@ -138,7 +138,7 @@ function summarizeSignature(signature) {
   return summary;
 }
 
-function selectWebhookSecret() {
+function getWebhookSecretCandidates() {
   const environmentHint = String(process.env.PADDLE_ENVIRONMENT || process.env.VERCEL_ENV || "").toLowerCase();
 
   const candidates = [];
@@ -155,18 +155,42 @@ function selectWebhookSecret() {
   candidates.push(["PADDLE_WEBHOOK_SECRET_LIVE", process.env.PADDLE_WEBHOOK_SECRET_LIVE]);
   candidates.push(["PADDLE_WEBHOOK_SECRET_PRODUCTION", process.env.PADDLE_WEBHOOK_SECRET_PRODUCTION]);
 
-  const chosen = candidates.find(function (_entry, index, array) {
-    const value = _entry[1];
-    return Boolean(value) && array.findIndex(function (candidate) {
-      return candidate[1] === value;
-    }) === index;
-  });
+  const seen = new Set();
+  const uniqueCandidates = candidates
+    .map(function ([name, value]) {
+      return [name, typeof value === "string" ? value.trim() : value];
+    })
+    .filter(function ([name, value]) {
+      if (!value) {
+        return false;
+      }
+
+      const key = name + "::" + value;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
 
   return {
-    secret: chosen ? chosen[1] : null,
-    secretName: chosen ? chosen[0] : null,
+    candidates: uniqueCandidates,
     environmentHint: environmentHint || null,
   };
+}
+
+function verifyPaddleSignatureWithCandidates(rawBody, signature, candidates) {
+  if (!signature || !Array.isArray(candidates) || candidates.length === 0) {
+    return { ok: false, secretName: null };
+  }
+
+  for (const [secretName, secretValue] of candidates) {
+    if (verifyPaddleSignature(rawBody, signature, secretValue)) {
+      return { ok: true, secretName: secretName };
+    }
+  }
+
+  return { ok: false, secretName: null };
 }
 
 /* ─────────────────────────────────────────────
@@ -218,10 +242,9 @@ module.exports = async function handler(req, res) {
 
     // 2. Verify Paddle signature
     const signature = req.headers["paddle-signature"];
-    const secretSelection = selectWebhookSecret();
-    const secret = secretSelection.secret;
+    const secretSelection = getWebhookSecretCandidates();
 
-    if (!secret) {
+    if (!secretSelection.candidates.length) {
       console.error("[paddle-webhook] Missing Paddle webhook secret", {
         requestId,
         environmentHint: secretSelection.environmentHint,
@@ -239,20 +262,31 @@ module.exports = async function handler(req, res) {
       hasSignature: Boolean(signature),
       signatureSummary: summarizeSignature(signature),
       bodyLength: rawBody.length,
-      secretSource: secretSelection.secretName,
+      secretSources: secretSelection.candidates.map(function ([name]) { return name; }),
       environmentHint: secretSelection.environmentHint,
     });
 
-    if (!verifyPaddleSignature(rawBody, signature, secret)) {
+    const verificationResult = verifyPaddleSignatureWithCandidates(
+      rawBody,
+      signature,
+      secretSelection.candidates
+    );
+
+    if (!verificationResult.ok) {
       console.warn("[paddle-webhook] Invalid signature — rejecting", {
         requestId,
         signaturePrefix: signature ? signature.slice(0, 24) : null,
         bodyPreview: rawBody.slice(0, 120),
-        secretConfigured: Boolean(secret),
-        secretSource: secretSelection.secretName,
+        secretConfigured: secretSelection.candidates.length > 0,
+        secretSources: secretSelection.candidates.map(function ([name]) { return name; }),
       });
       return res.status(403).json({ error: "Invalid signature" });
     }
+
+    console.log("[paddle-webhook] Signature verified", {
+      requestId,
+      secretSource: verificationResult.secretName,
+    });
 
     // 3. Parse the event
     const event = parseEventFromRawBody(rawBody);

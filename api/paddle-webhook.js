@@ -138,6 +138,37 @@ function summarizeSignature(signature) {
   return summary;
 }
 
+function selectWebhookSecret() {
+  const environmentHint = String(process.env.PADDLE_ENVIRONMENT || process.env.VERCEL_ENV || "").toLowerCase();
+
+  const candidates = [];
+  if (environmentHint === "sandbox") {
+    candidates.push(["PADDLE_WEBHOOK_SECRET_SANDBOX", process.env.PADDLE_WEBHOOK_SECRET_SANDBOX]);
+  }
+  if (environmentHint === "production") {
+    candidates.push(["PADDLE_WEBHOOK_SECRET_LIVE", process.env.PADDLE_WEBHOOK_SECRET_LIVE]);
+    candidates.push(["PADDLE_WEBHOOK_SECRET_PRODUCTION", process.env.PADDLE_WEBHOOK_SECRET_PRODUCTION]);
+  }
+
+  candidates.push(["PADDLE_WEBHOOK_SECRET", process.env.PADDLE_WEBHOOK_SECRET]);
+  candidates.push(["PADDLE_WEBHOOK_SECRET_SANDBOX", process.env.PADDLE_WEBHOOK_SECRET_SANDBOX]);
+  candidates.push(["PADDLE_WEBHOOK_SECRET_LIVE", process.env.PADDLE_WEBHOOK_SECRET_LIVE]);
+  candidates.push(["PADDLE_WEBHOOK_SECRET_PRODUCTION", process.env.PADDLE_WEBHOOK_SECRET_PRODUCTION]);
+
+  const chosen = candidates.find(function (_entry, index, array) {
+    const value = _entry[1];
+    return Boolean(value) && array.findIndex(function (candidate) {
+      return candidate[1] === value;
+    }) === index;
+  });
+
+  return {
+    secret: chosen ? chosen[1] : null,
+    secretName: chosen ? chosen[0] : null,
+    environmentHint: environmentHint || null,
+  };
+}
+
 /* ─────────────────────────────────────────────
    Firestore Helpers
    ───────────────────────────────────────────── */
@@ -187,10 +218,14 @@ module.exports = async function handler(req, res) {
 
     // 2. Verify Paddle signature
     const signature = req.headers["paddle-signature"];
-    const secret = process.env.PADDLE_WEBHOOK_SECRET;
+    const secretSelection = selectWebhookSecret();
+    const secret = secretSelection.secret;
 
     if (!secret) {
-      console.error("[paddle-webhook] Missing PADDLE_WEBHOOK_SECRET", { requestId });
+      console.error("[paddle-webhook] Missing Paddle webhook secret", {
+        requestId,
+        environmentHint: secretSelection.environmentHint,
+      });
       return res.status(500).json({ error: "Webhook secret not configured" });
     }
 
@@ -204,6 +239,8 @@ module.exports = async function handler(req, res) {
       hasSignature: Boolean(signature),
       signatureSummary: summarizeSignature(signature),
       bodyLength: rawBody.length,
+      secretSource: secretSelection.secretName,
+      environmentHint: secretSelection.environmentHint,
     });
 
     if (!verifyPaddleSignature(rawBody, signature, secret)) {
@@ -212,6 +249,7 @@ module.exports = async function handler(req, res) {
         signaturePrefix: signature ? signature.slice(0, 24) : null,
         bodyPreview: rawBody.slice(0, 120),
         secretConfigured: Boolean(secret),
+        secretSource: secretSelection.secretName,
       });
       return res.status(403).json({ error: "Invalid signature" });
     }

@@ -5,18 +5,24 @@
  * Verifies the HMAC-SHA256 signature from Paddle, then routes
  * subscription lifecycle events to update the user's premium status
  * in Firebase Firestore.
- *
- * Handled events:
- *   - subscription.activated  → isPremium = true
- *   - subscription.updated    → isPremium based on status
- *   - subscription.canceled   → isPremium = false
  */
 
 const crypto = require("crypto");
 const { db } = require("../lib/firebase");
 
 /* ─────────────────────────────────────────────
-   Signature Verification
+    Vercel Serverless Configuration
+   ───────────────────────────────────────────── */
+
+// CRITICAL: Tells Vercel to bypass automatic body parsing so we can get the true byte-perfect stream
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+/* ─────────────────────────────────────────────
+    Signature Verification
    ───────────────────────────────────────────── */
 
 /**
@@ -69,50 +75,26 @@ function verifyPaddleSignature(rawBody, signature, secret) {
 }
 
 /**
- * Best-effort raw body extraction for signature verification.
- * Paddle signatures are computed over the exact raw payload bytes.
+ * Reads the raw unparsed network request bytes straight from the buffer stream.
  */
 async function getRawBody(req) {
-  if (typeof req.body === "string") {
-    return req.body;
-  }
-
-  if (Buffer.isBuffer(req.body)) {
-    return req.body.toString("utf8");
-  }
-
-  if (Buffer.isBuffer(req.rawBody)) {
-    return req.rawBody.toString("utf8");
-  }
-
-  if (typeof req.rawBody === "string") {
-    return req.rawBody;
-  }
-
-  // Fallback only; this may not always match original byte-for-byte payload.
-  if (req.body && typeof req.body === "object") {
-    return JSON.stringify(req.body);
-  }
-
-  if (!req.readable) {
-    return "";
+  if (typeof req.body === "string" && !req.readable) {
+    return req.body; // Fallback if parsed elsewhere
   }
 
   const chunks = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-
   return Buffer.concat(chunks).toString("utf8");
 }
 
 /* ─────────────────────────────────────────────
-   Firestore Helpers
+    Firestore Helpers
    ───────────────────────────────────────────── */
 
 /**
  * Upsert the user's subscription state in Firestore.
- * Uses set-with-merge so we never lose data on out-of-order events.
  */
 async function updateUserSubscription(userId, data) {
   if (!userId) {
@@ -133,7 +115,7 @@ async function updateUserSubscription(userId, data) {
 }
 
 /* ─────────────────────────────────────────────
-   Request Handler
+    Request Handler
    ───────────────────────────────────────────── */
 
 module.exports = async function handler(req, res) {
@@ -150,7 +132,7 @@ module.exports = async function handler(req, res) {
   try {
     const requestId = req.headers["x-vercel-id"] || "unknown";
 
-    // 1. Get the raw body for signature verification
+    // 1. Get the raw unparsed network body stream
     const rawBody = await getRawBody(req);
 
     // 2. Verify Paddle signature
@@ -178,13 +160,13 @@ module.exports = async function handler(req, res) {
       return res.status(403).json({ error: "Invalid signature" });
     }
 
-    // 3. Parse the event
-    const event = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    // 3. SECURE CHANGE: Parse rawBody since Vercel's automatic parsing is now disabled
+    const event = JSON.parse(rawBody);
     const eventType = event.event_type;
     const eventId = event.event_id;
     const data = event.data || {};
 
-    console.log(`[paddle-webhook] Received: ${eventType} (${eventId})`);
+    console.log(`[paddle-webhook] Received verified event: ${eventType} (${eventId})`);
 
     // 4. Extract userId from customData
     const customData = data.custom_data || {};
@@ -197,7 +179,6 @@ module.exports = async function handler(req, res) {
         eventId,
         customData,
       });
-      // Still return 200 to Paddle to avoid retries
       return res.status(200).json({ received: true, warning: "no userId" });
     }
 
@@ -221,8 +202,7 @@ module.exports = async function handler(req, res) {
         });
         break;
 
-      case "subscription.updated":
-        // Check the new status — "active", "trialing", "past_due", "paused", "canceled"
+      case "subscription.updated": {
         const isActive = ["active", "trialing"].includes(data.status);
         await updateUserSubscription(userId, {
           isPremium: isActive,
@@ -231,6 +211,7 @@ module.exports = async function handler(req, res) {
           paddleEventId: eventId,
         });
         break;
+      }
 
       case "subscription.canceled":
       case "subscription.past_due":
@@ -253,11 +234,9 @@ module.exports = async function handler(req, res) {
       userId,
     });
 
-    // 6. Always return 200 to Paddle
     return res.status(200).json({ received: true, eventType });
   } catch (err) {
     console.error("[paddle-webhook] Handler error:", err);
-    // Return 200 even on errors to prevent Paddle retry storms
     return res.status(200).json({ received: true, error: "internal" });
   }
 };

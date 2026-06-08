@@ -122,6 +122,22 @@ function parseEventFromRawBody(rawBody) {
   return null;
 }
 
+function summarizeSignature(signature) {
+  if (!signature) {
+    return null;
+  }
+
+  const summary = {};
+  signature.split(";").forEach(function (part) {
+    const index = part.indexOf("=");
+    if (index > 0) {
+      summary[part.slice(0, index)] = part.slice(index + 1).slice(0, 12);
+    }
+  });
+
+  return summary;
+}
+
 /* ─────────────────────────────────────────────
    Firestore Helpers
    ───────────────────────────────────────────── */
@@ -186,6 +202,7 @@ module.exports = async function handler(req, res) {
     console.log("[paddle-webhook] Incoming request", {
       requestId,
       hasSignature: Boolean(signature),
+      signatureSummary: summarizeSignature(signature),
       bodyLength: rawBody.length,
     });
 
@@ -194,6 +211,7 @@ module.exports = async function handler(req, res) {
         requestId,
         signaturePrefix: signature ? signature.slice(0, 24) : null,
         bodyPreview: rawBody.slice(0, 120),
+        secretConfigured: Boolean(secret),
       });
       return res.status(403).json({ error: "Invalid signature" });
     }
@@ -213,6 +231,16 @@ module.exports = async function handler(req, res) {
     // 4. Extract userId from customData
     const customData = data.custom_data || {};
     const userId = customData.userId || customData.user_id || null;
+
+    console.log("[paddle-webhook] Parsed event payload", {
+      requestId,
+      eventType,
+      eventId,
+      dataId: data.id || null,
+      subscriptionStatus: data.status || null,
+      hasCustomData: Object.keys(customData).length > 0,
+      userId,
+    });
 
     if (!userId) {
       console.warn("[paddle-webhook] No userId in custom_data", {
@@ -234,6 +262,7 @@ module.exports = async function handler(req, res) {
 
     // 5. Route by event type
     switch (eventType) {
+      case "subscription.created":
       case "subscription.activated":
       case "subscription.resumed":
         await updateUserSubscription(userId, {
@@ -262,6 +291,15 @@ module.exports = async function handler(req, res) {
         await updateUserSubscription(userId, {
           isPremium: false,
           subscriptionStatus: data.status || "canceled",
+          paddleEventId: eventId,
+        });
+        break;
+
+      case "transaction.completed":
+        await updateUserSubscription(userId, {
+          isPremium: true,
+          transactionId: data.id || null,
+          transactionStatus: data.status || "completed",
           paddleEventId: eventId,
         });
         break;
